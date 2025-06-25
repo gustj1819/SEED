@@ -1,0 +1,584 @@
+---
+title: "SEED"
+author: "박현서"
+date: "2025-06-15"
+output: word_document
+---
+1. 데이터 불러오기
+```{r}
+library(dplyr)
+df <- read.csv("C:/Users/USER/Desktop/df_scaled_PC6.csv")
+df <- df %>% arrange(Year, Country)
+df
+```
+
+
+
+```{r}
+# 공간가중치 행렬 불러오기
+W9<- read.csv("C:/Users/USER/Desktop/공간가중행렬9.csv", row.names = 1, check.names = FALSE)
+W10<- read.csv("C:/Users/USER/Desktop/공간가중행렬10.csv", row.names = 1, check.names = FALSE)
+W11<- read.csv("C:/Users/USER/Desktop/공간가중행렬11.csv", row.names = 1, check.names = FALSE)
+W12<- read.csv("C:/Users/USER/Desktop/공간가중행렬12.csv", row.names = 1, check.names = FALSE)
+W13<- read.csv("C:/Users/USER/Desktop/공간가중행렬13.csv", row.names = 1, check.names = FALSE)
+W14<- read.csv("C:/Users/USER/Desktop/공간가중행렬14.csv", row.names = 1, check.names = FALSE)
+W15<- read.csv("C:/Users/USER/Desktop/공간가중행렬15.csv", row.names = 1, check.names = FALSE)
+W16<- read.csv("C:/Users/USER/Desktop/공간가중행렬16.csv", row.names = 1, check.names = FALSE)
+W17<- read.csv("C:/Users/USER/Desktop/공간가중행렬17.csv", row.names = 1, check.names = FALSE)
+W18<- read.csv("C:/Users/USER/Desktop/공간가중행렬18.csv", row.names = 1, check.names = FALSE)
+W19<- read.csv("C:/Users/USER/Desktop/공간가중행렬19.csv", row.names = 1, check.names = FALSE)
+W20<- read.csv("C:/Users/USER/Desktop/공간가중행렬20.csv", row.names = 1, check.names = FALSE)
+
+```
+
+
+
+3. 일반 회귀에서 오차항 moran test (전체 가중 행렬 비교 k를 9부터 20개까지 했을때)
+```{r}
+library(dplyr)
+library(spdep)
+
+# 1. 데이터 정렬
+pdata <- df %>% arrange(Year, Country)
+
+# 2. 모든 공간가중행렬 불러오기 (W9 ~ W20)
+W_paths <- paste0("C:/Users/USER/Desktop/공간가중행렬", 9:20, ".csv")
+W_names <- paste0("W", 9:20)
+
+W_list <- lapply(W_paths, function(path) read.csv(path, row.names = 1, check.names = FALSE))
+names(W_list) <- W_names
+
+# 3. 연도별로 모든 W 적용하여 Moran's I 테스트
+years <- 2011:2022
+moran_best_results <- list()  # 최종적으로 가장 좋은 결과 저장
+
+for (y in years) {
+  df_single <- subset(pdata, Year == y)
+  
+  best_p <- Inf
+  best_result <- NULL
+  best_Wname <- NULL
+  
+  for (w_name in names(W_list)) {
+    W_matrix <- as.matrix(W_list[[w_name]])
+    listw <- mat2listw(W_matrix, style = "W")
+    
+    # 데이터 정렬: Country 순서가 region.id와 일치해야 함
+    matched <- match(attr(listw, "region.id"), df_single$Country)
+    
+    # 일치 확인 (불일치 시 skip)
+    if (any(is.na(matched))) next
+    df_matched <- df_single[matched, ]
+    
+    # 회귀모형 적합
+    model <- lm(ODA_Disb ~ PC1 + PC2 + PC3 + PC4 + PC5 + PC6, data = df_matched)
+    df_matched$residuals <- residuals(model)
+    
+    # Moran's I 계산
+    moran_result <- tryCatch(
+      moran.test(df_matched$residuals, listw),
+      error = function(e) NULL
+    )
+    
+    # 유효한 결과가 있고, 더 낮은 p-value면 갱신
+    if (!is.null(moran_result)) {
+      pval <- moran_result$p.value
+      if (pval < best_p) {
+        best_p <- pval
+        best_result <- moran_result
+        best_Wname <- w_name
+      }
+    }
+  }
+  
+  # 저장
+  moran_best_results[[as.character(y)]] <- list(
+    year = y,
+    best_W = best_Wname,
+    result = best_result
+  )
+}
+
+# 4. 결과 출력 예시
+for (y in years) {
+  cat("==== Year:", y, "====\n")
+  res <- moran_best_results[[as.character(y)]]
+  if (!is.null(res$result)) {
+    cat("Best W:", res$best_W, "\n")
+    print(res$result$estimate)
+    cat("p-value:", res$result$p.value, "\n\n")
+  } else {
+    cat("No valid Moran's I result\n\n")
+  }
+}
+
+```
+-> 13이 유의미한 게 가장 많음 13으로 ols moran 돌리기
+
+```{r}
+library(dplyr)
+library(spdep)
+
+# 1. 데이터 정렬
+pdata <- df %>% arrange(Year, Country)
+
+# 2. W13 공간가중행렬만 불러오기
+W13 <- read.csv("C:/Users/USER/Desktop/공간가중행렬13.csv", row.names = 1, check.names = FALSE)
+W_matrix <- as.matrix(W13)
+listw <- mat2listw(W_matrix, style = "W")
+
+# 3. 연도별 Moran's I 테스트 (W13 고정)
+years <- 2011:2022
+moran_results <- list()
+
+for (y in years) {
+  df_single <- subset(pdata, Year == y)
+  
+  # Country 순서 맞추기 (listw region.id와 일치)
+  matched <- match(attr(listw, "region.id"), df_single$Country)
+  if (any(is.na(matched))) {
+    cat("Year", y, ": country mismatch, skipped\n")
+    next
+  }
+  df_matched <- df_single[matched, ]
+  
+  # 회귀모형 적합
+  model <- lm(ODA_Disb ~ PC1 + PC2 + PC3 + PC4 + PC5 + PC6, data = df_matched)
+  df_matched$residuals <- residuals(model)
+  
+  # Moran's I 계산
+  moran_result <- tryCatch(
+    moran.test(df_matched$residuals, listw),
+    error = function(e) NULL
+  )
+  
+  moran_results[[as.character(y)]] <- moran_result
+}
+
+# 4. 결과 출력
+for (y in years) {
+  cat("==== Year:", y, "====\n")
+  res <- moran_results[[as.character(y)]]
+  if (!is.null(res)) {
+    cat("Best W: W13\n")
+    print(res$estimate)
+    cat("p-value:", res$p.value, "\n\n")
+  } else {
+    cat("No valid Moran's I result\n\n")
+  }
+}
+
+
+```
+
+4. SAR MLE (랜덤 vs 고정 (개체, 시간, 개체+시간, 아무것도 x))
+```{r}
+# 필요한 패키지 설치 및 로드
+install.packages(c("plm", "spdep", "spatialreg", "splm"))
+```
+
+```{r}
+library(plm)
+library(spdep)
+library(spatialreg)
+library(splm)
+library(dplyr)
+# 1. 데이터 불러오기
+df <- read.csv("C:/Users/USER/Desktop/df_scaled_PC6.csv")
+df <- df %>% arrange(Year, Country)
+
+# 2. 국가와 연도 factor로 변환
+df$Country <- as.factor(df$Country)
+df$Year <- as.factor(df$Year)
+
+# 3. 패널 데이터 구조 지정
+pdata <- pdata.frame(df, index = c("Country", "Year"))
+pdata <- pdata %>% arrange(Year, Country)
+
+# 4. 공간 가중 행렬 불러오기 (예: W_block이 있는 경우)
+# 가정: W_block은 행렬 형태로 존재
+# 국가 목록 맞추기
+countries <- unique(df$Country)
+W_matrix <- as.matrix(W13)
+rownames(W_matrix) <- NULL
+colnames(W_matrix) <- NULL
+listw <- mat2listw(W_matrix, style = "W")
+
+# 5. 변수 지정
+formula <- ODA_Disb ~ PC1 + PC2 + PC3 + PC4 + PC5 + PC6
+
+# 6. 공간 자기회귀 모형 (SAR) - pooled
+sar_pooled <- spml(formula, data = pdata, listw = listw, model = "pooling", spatial.error = "none", lag = TRUE)
+
+# 7. 공간 자기회귀 모형 - 고정효과: 개체
+sar_fe <- spml(formula, data = pdata, listw = listw, model = "within", effect = "individual", spatial.error = "none", lag = TRUE)
+
+# 8. 공간 자기회귀 모형 - 고정효과: 시간
+sar_te <- spml(formula, data = pdata, listw = listw, model = "within", effect = "time", spatial.error = "none", lag = TRUE)
+
+# 9. 공간 자기회귀 모형 - 고정효과: 개체+시간
+sar_fetw <- spml(formula, data = pdata, listw = listw, model = "within", effect = "twoways", spatial.error = "none", lag = TRUE)
+
+# 10. 공간 자기회귀 모형 - 랜덤효과
+sar_re <- spml(formula, data = pdata, listw = listw, model = "random", spatial.error = "none", lag = TRUE)
+
+# 11. 결과 비교 출력
+summary(sar_pooled)
+summary(sar_fe)
+summary(sar_te)
+summary(sar_fetw)
+summary(sar_re)
+
+```
+
+
+
+#AIC 비교
+```{r}
+# 1. 로그우도 추출
+loglik_pool <- sar_pooled$logLik
+loglik_ind <- sar_fe$logLik
+loglik_time <- sar_te$logLik
+loglik_twoways <- sar_fetw$logLik
+loglik_re <- sar_re$logLik
+
+# 2. 모수 개수 계산 (lambda + 회귀계수 수 + 필요시 분산 파라미터 등)
+
+k_pool <- length(sar_pooled$coefficients) + 1       # lambda 포함
+k_ind <- length(sar_fe$coefficients) + 1
+k_time <- length(sar_te$coefficients) + 1
+k_twoways <- length(sar_fetw$coefficients) + 1
+k_re <- length(sar_re$coefficients) + 2             # lambda + phi(분산) + 회귀계수
+
+
+# 3. AIC 직접 계산
+aic_pool <- -2 * loglik_pool + 2 * k_pool
+aic_ind <- -2 * loglik_ind + 2 * k_ind
+aic_time <- -2 * loglik_time + 2 * k_time
+aic_twoways <- -2 * loglik_twoways + 2 * k_twoways
+aic_re <- -2 * loglik_re + 2 * k_re
+
+
+# 4. 결과 출력
+cat("풀링 효과 AIC:", aic_pool, "\n")
+cat("개체 고정효과 AIC:", aic_ind, "\n")
+cat("시간 고정효과 AIC:", aic_time, "\n")
+cat("개체 + 시간 고정효과 AIC:", aic_twoways, "\n")
+cat("랜덤 효과 AIC:", aic_re, "\n")
+
+```
+
+```{r}
+loglik_pool 
+loglik_ind 
+loglik_time 
+loglik_twoways 
+loglik_re 
+```
+4-2. 잔차분석
+```{r}
+
+# 1. 데이터 불러오기
+df <- read.csv("C:/Users/USER/Desktop/df_scaled_PC6.csv")
+df <- df %>% arrange(Year, Country)
+
+# 2. 국가와 연도 factor로 변환
+df$Country <- as.factor(df$Country)
+df$Year <- as.factor(df$Year)
+
+# 3. 패널 데이터 구조 지정
+pdata <- pdata.frame(df, index = c("Country", "Year"))
+pdata <- pdata %>% arrange(Year, Country)
+
+# 4. 공간 가중 행렬 불러오기 (예: W_block이 있는 경우)
+# 가정: W_block은 행렬 형태로 존재
+# 국가 목록 맞추기
+countries <- unique(df$Country)
+W_matrix <- as.matrix(W13)
+rownames(W_matrix) <- NULL
+colnames(W_matrix) <- NULL
+listw <- mat2listw(W_matrix, style = "W")
+residuals_pool <- residuals(sar_pooled)
+residuals_fe <- residuals(sar_fe)
+residuals_te <- residuals(sar_te)
+residuals_twoways <- residuals(sar_fetw)
+residuals_re <- residuals(sar_re)
+# residuals 계산 후 df에 추가
+df$residuals_pool <- residuals_pool
+df$residuals_fe <- residuals_fe
+df$residuals_te <- residuals_te
+df$residuals_twoways <- residuals_twoways
+df$residuals_re <- residuals_re
+
+# 국가별 평균 잔차 계산
+country_residuals_pool <- df %>%
+  group_by(Country) %>%
+  summarise(mean_resid = mean(residuals_pool))
+
+country_residuals_fe <- df %>%
+  group_by(Country) %>%
+  summarise(mean_resid = mean(residuals_fe))
+
+country_residuals_time <- df %>%
+  group_by(Country) %>%
+  summarise(mean_resid = mean(residuals_te))
+
+country_residuals_twoways <- df %>%
+  group_by(Country) %>%
+  summarise(mean_resid = mean(residuals_twoways))
+
+country_residuals_re <- df %>%
+  group_by(Country) %>%
+  summarise(mean_resid = mean(residuals_re))
+
+# Moran’s I 테스트
+moran_test_pool <- moran.test(country_residuals_pool$mean_resid, listw)
+print(moran_test_pool)
+
+moran_test_fe <- moran.test(country_residuals_fe$mean_resid, listw)
+print(moran_test_fe)
+
+moran_test_time <- moran.test(country_residuals_time$mean_resid, listw)
+print(moran_test_time)
+
+moran_test_twoways <- moran.test(country_residuals_twoways$mean_resid, listw)
+print(moran_test_twoways)
+
+moran_test_re <- moran.test(country_residuals_re$mean_resid, listw)
+print(moran_test_re)
+
+
+```
+5. SEM 모델 
+
+```{r}
+library(plm)
+library(spdep)
+library(spatialreg)
+library(splm)
+
+# 1. 데이터 불러오기
+df <- read.csv("C:/Users/USER/Desktop/df_scaled_PC6.csv")
+df <- df %>% arrange(Year, Country)
+
+# 2. 국가와 연도 factor로 변환
+df$Country <- as.factor(df$Country)
+df$Year <- as.factor(df$Year)
+
+# 3. 패널 데이터 구조 지정
+pdata <- pdata.frame(df, index = c("Country", "Year"))
+pdata <- pdata %>% arrange(Year, Country)
+
+# 4. 공간 가중 행렬 불러오기 (예: W_block이 있는 경우)
+# 가정: W_block은 행렬 형태로 존재
+# 국가 목록 맞추기
+countries <- unique(df$Country)
+W_matrix <- as.matrix(W13)
+rownames(W_matrix) <- NULL
+colnames(W_matrix) <- NULL
+listw <- mat2listw(W_matrix, style = "W")
+
+# 5. 변수 지정
+formula <- ODA_Disb ~ PC1 + PC2 + PC3 + PC4 + PC5 + PC6
+
+# 6. 공간 오차 모형형 (SEM) - pooled
+sem_pooled <- spml(formula, data = pdata, listw = listw, model = "pooling", spatial.error = "b", lag = FALSE)
+
+# 7. 공간 오차 모형 - 고정효과: 개체
+sem_fe <- spml(formula, data = pdata, listw = listw, model = "within", effect = "individual", spatial.error = "b", lag = FALSE)
+
+# 8. 공간 오차 모형 - 고정효과: 시간
+sem_te <- spml(formula, data = pdata, listw = listw, model = "within", effect = "time", spatial.error = "b", lag = FALSE)
+
+# 9. 공간 오차 모형 - 고정효과: 개체+시간
+sem_fetw <- spml(formula, data = pdata, listw = listw, model = "within", effect = "twoways", spatial.error = "b", lag = FALSE)
+
+# 10. 공간 오차 모형 - 랜덤효과
+sem_re <- spml(formula, data = pdata, listw = listw, model = "random", spatial.error = "b", lag = FALSE)
+
+# 11. 결과 비교 출력
+summary(sem_pooled)
+summary(sem_fe)
+summary(sem_te)
+summary(sem_fetw)
+summary(sem_re)
+```
+
+```{r}
+# 1. 로그우도 추출
+loglik_pool <- sem_pooled$logLik
+loglik_ind <- sem_fe$logLik
+loglik_time <- sem_te$logLik
+loglik_twoways <- sem_fetw$logLik
+loglik_re <- sem_re$logLik
+
+# 2. 모수 개수 계산 (lambda + 회귀계수 수 + 필요시 분산 파라미터 등)
+
+k_pool <- length(sem_pooled$coefficients) + 1       # lambda 포함
+k_ind <- length(sem_fe$coefficients) + 1
+k_time <- length(sem_te$coefficients) + 1
+k_twoways <- length(sem_fetw$coefficients) + 1
+k_re <- length(sem_re$coefficients) + 2             # lambda + phi(분산) + 회귀계수
+
+
+# 3. AIC 직접 계산
+aic_pool <- -2 * loglik_pool + 2 * k_pool
+aic_ind <- -2 * loglik_ind + 2 * k_ind
+aic_time <- -2 * loglik_time + 2 * k_time
+aic_twoways <- -2 * loglik_twoways + 2 * k_twoways
+aic_re <- -2 * loglik_re + 2 * k_re
+
+
+# 4. 결과 출력
+cat("풀링 효과 AIC:", aic_pool, "\n")
+cat("개체 고정효과 AIC:", aic_ind, "\n")
+cat("시간 고정효과 AIC:", aic_time, "\n")
+cat("개체 + 시간 고정효과 AIC:", aic_twoways, "\n")
+cat("랜덤 효과 AIC:", aic_re, "\n")
+
+```
+```{r}
+loglik_pool 
+loglik_ind 
+loglik_time 
+loglik_twoways 
+loglik_re 
+```
+#잔차분석
+```{r}
+library(dplyr)
+
+# 잔차 구해서 df에 넣기
+df$residuals_pool <- residuals(sem_pooled)
+df$residuals_fe <- residuals(sem_fe)
+df$residuals_te <- residuals(sem_te)
+df$residuals_twoways <- residuals(sem_fetw)
+df$residuals_re <- residuals(sem_re)
+
+# 국가별 평균 잔차 계산
+country_residuals_pool <- df %>%
+  group_by(Country) %>%
+  summarise(mean_resid = mean(residuals_pool))
+
+country_residuals_fe <- df %>%
+  group_by(Country) %>%
+  summarise(mean_resid = mean(residuals_fe))
+
+country_residuals_time <- df %>%
+  group_by(Country) %>%
+  summarise(mean_resid = mean(residuals_te))
+
+country_residuals_twoways <- df %>%
+  group_by(Country) %>%
+  summarise(mean_resid = mean(residuals_twoways))
+
+country_residuals_re <- df %>%
+  group_by(Country) %>%
+  summarise(mean_resid = mean(residuals_re))
+
+# Moran's I 검정 (벡터만 넣어야 함)
+moran_test_pool <- moran.test(country_residuals_pool$mean_resid, listw)
+print(moran_test_pool)
+
+moran_test_fe <- moran.test(country_residuals_fe$mean_resid, listw)
+print(moran_test_fe)
+
+moran_test_time <- moran.test(country_residuals_time$mean_resid, listw)
+print(moran_test_time)
+
+moran_test_twoways <- moran.test(country_residuals_twoways$mean_resid, listw)
+print(moran_test_twoways)
+
+moran_test_re <- moran.test(country_residuals_re$mean_resid, listw)
+print(moran_test_re)
+
+```
+6.SAC
+```{r}
+# 필요한 패키지 불러오기
+library(spdep)
+library(spatialreg)
+library(Matrix)
+library(splm)
+library(plm)
+
+# 1. 데이터 불러오기
+df <- read.csv("C:/Users/USER/Desktop/df_scaled_PC6.csv")
+df <- df %>% arrange(Year, Country)
+
+# 2. 고유한 국가 및 연도 정보 추출
+countries <- sort(unique(df$Country))
+years <- sort(unique(df$Year))
+n_country <- length(countries)
+n_year <- length(years)
+
+
+# 4. 패널 데이터로 선언 (plm 패키지)
+pdata <- pdata.frame(df, index = c("Country", "Year"))
+pdata <- pdata %>% arrange(Year, Country)
+
+# 5. 공간가중행렬 불러오기 및 행렬 변환
+W_raw <- read.csv("C:/Users/USER/Desktop/weight_matrix (22).csv", check.names = FALSE)
+W_matrix <- as.matrix(W_raw)
+
+# 7. 데이터 순서에 맞게 공간가중행렬 재정렬
+original_index <- expand.grid(Country = countries, Year = years)
+target_index <- df[, c("Country", "Year")]
+reorder_idx <- match(
+  paste(target_index$Country, target_index$Year),
+  paste(original_index$Country, original_index$Year)
+)
+
+# 8. 최종 공간가중행렬 정렬 및 listw 객체 생성
+W_big_reordered <- W_matrix[reorder_idx, reorder_idx]
+listw <- mat2listw(as.matrix(W_big_reordered), style = "W")
+
+# 9. 회귀식 정의
+formula <- ODA_Disb ~ PC1 + PC2 + PC3 + PC4 + PC5 + PC6
+
+# 10. SAC 모델 적합 (SAR + SEM)
+model_sac <- spml(
+  formula = formula,
+  data = pdata,
+  listw = listw,
+  model = "within",       # 고정효과
+  spatial.error = "b",    # "b" = SAC
+  lag = TRUE              # lag = TRUE → SAR 포함
+)
+
+# 11. 결과 요약
+summary(model_sac)
+
+
+
+```
+
+7. CSAC 모델
+```{r}
+install.packages("urca")
+```
+
+```{r}
+library(plm)
+library(urca)
+
+# 1. Country, Year를 factor로 변환 
+df <- read.csv("C:/Users/USER/Desktop/df_scaled_PC6.csv")
+df$Country <- as.factor(df$Country)
+df$Year <- as.factor(df$Year)
+
+# 2. pdata.frame으로 변환
+pdata <- pdata.frame(df, index = c("Country", "Year"))
+
+# 3. purtest 실행 (levinlin 은 Levin-Lin-Chu 검정)
+purtest(pdata$PC1, test = "levinlin", index = c("Country", "Year"), lags = 1)
+purtest(pdata$PC2, test = "levinlin", index = c("Country", "Year"), lags = 1)
+purtest(pdata$PC3, test = "levinlin", index = c("Country", "Year"), lags = 1)
+purtest(pdata$PC4, test = "levinlin", index = c("Country", "Year"), lags = 1)
+purtest(pdata$PC5, test = "levinlin", index = c("Country", "Year"), lags = 1)
+purtest(pdata$PC6, test = "levinlin", index = c("Country", "Year"), lags = 1)
+dim(pdata)
+```
+
+
+```
